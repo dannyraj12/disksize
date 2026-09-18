@@ -1,98 +1,70 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI
 import os
 import shutil
-import time
-import requests
 
-app = FastAPI(title="Blitz Remote Uploader Test")
-
-
-class DownloadRequest(BaseModel):
-    url: str
+app = FastAPI(title="Blitz Storage Test")
 
 
 @app.get("/")
 def home():
     total, used, free = shutil.disk_usage("/")
-    
+
     return {
         "status": "online",
         "disk": {
-            "total_gb": round(total / 1024**3, 2),
-            "used_gb": round(used / 1024**3, 2),
-            "free_gb": round(free / 1024**3, 2),
+            "total_gib": round(total / 1024**3, 2),
+            "used_gib": round(used / 1024**3, 2),
+            "free_gib": round(free / 1024**3, 2),
         }
     }
 
 
-@app.get("/disk")
-def disk():
-    total, used, free = shutil.disk_usage("/")
+@app.get("/mounts")
+def mounts():
+    with open("/proc/mounts", "r") as f:
+        data = f.read()
 
     return {
-        "total_bytes": total,
-        "used_bytes": used,
-        "free_bytes": free,
-        "total_gb": round(total / 1024**3, 2),
-        "used_gb": round(used / 1024**3, 2),
-        "free_gb": round(free / 1024**3, 2),
+        "mounts": data
     }
 
 
-@app.post("/test-download")
-def test_download(data: DownloadRequest):
+@app.get("/writable")
+def writable():
+    paths = [
+        "/tmp",
+        "/app",
+        "/data",
+        "/workspace",
+        "/mnt",
+    ]
 
-    filename = "/tmp/test_download.bin"
+    result = {}
 
-    try:
-        start = time.time()
+    for path in paths:
+        try:
+            os.makedirs(path, exist_ok=True)
 
-        with requests.get(
-            data.url,
-            stream=True,
-            timeout=60,
-            allow_redirects=True
-        ) as r:
+            test_file = os.path.join(path, ".write_test")
 
-            r.raise_for_status()
+            with open(test_file, "w") as f:
+                f.write("test")
 
-            downloaded = 0
+            os.remove(test_file)
 
-            with open(filename, "wb") as f:
-                for chunk in r.iter_content(chunk_size=8 * 1024 * 1024):
-                    if not chunk:
-                        continue
+            total, used, free = shutil.disk_usage(path)
 
-                    f.write(chunk)
-                    downloaded += len(chunk)
-
-        elapsed = time.time() - start
-
-        total, used, free = shutil.disk_usage("/")
-
-        return {
-            "success": True,
-            "downloaded_bytes": downloaded,
-            "downloaded_gb": round(downloaded / 1024**3, 2),
-            "seconds": round(elapsed, 2),
-            "speed_mbps": round(
-                downloaded / elapsed / 1024 / 1024,
-                2
-            ),
-            "disk_after": {
-                "total_gb": round(total / 1024**3, 2),
-                "used_gb": round(used / 1024**3, 2),
-                "free_gb": round(free / 1024**3, 2),
+            result[path] = {
+                "status": "WRITABLE",
+                "total_gib": round(total / 1024**3, 2),
+                "used_gib": round(used / 1024**3, 2),
+                "free_gib": round(free / 1024**3, 2),
             }
-        }
 
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        except Exception as e:
+            result[path] = {
+                "status": "NOT WRITABLE",
+                "error": str(e)
+            }
 
-    finally:
-        if os.path.exists(filename):
-            os.remove(filename)
+    return result
